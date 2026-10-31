@@ -1,0 +1,90 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOEF - Tes Kamera</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f1f5f9;
+  text-align: center;
+  padding: 20px;
+  color: #1e293b;
+}
+.container {
+  max-width: 600px;
+  margin: 30px auto;
+  background: white;
+  padding: 20px;
+  border-radius: 16px;
+}
+video {
+  width: 100%;
+  background: #111;
+  border-radius: 12px;
+  margin-top: 15px;
+}
+button {
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+  margin: 8px;
+}
+#status { margin-top: 15px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h2>MOEF Smart Attendance</h2>
+  <p>Tes akses kamera GitHub Pages</p>
+
+  <video id="video" autoplay playsinline muted></video>
+
+  <div>
+    <button onclick="startCamera()">BUKA KAMERA</button>
+    <button onclick="stopCamera()">MATIKAN KAMERA</button>
+  </div>
+
+  <p id="status">Kamera belum diaktifkan.</p>
+</div>
+
+<script>
+let stream = null;
+
+async function startCamera() {
+  const status = document.getElementById('status');
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" },
+      audio: false
+    });
+
+    document.getElementById('video').srcObject = stream;
+    status.textContent = "BERHASIL: Kamera aktif!";
+    status.style.color = "green";
+
+  } catch (error) {
+    status.textContent = "GAGAL: " + error.name + " - " + error.message;
+    status.style.color = "red";
+  }
+}
+
+function stopCamera() {
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+
+  document.getElementById('video').srcObject = null;
+  document.getElementById('status').textContent =
+    "Kamera telah dimatikan.";
+}
+</script>
+</body>
+</html>
