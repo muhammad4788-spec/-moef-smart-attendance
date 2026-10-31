@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOEF - Registrasi Wajah Siswa</title>
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<style>
+:root{--navy:#123c69;--green:#16834a;--red:#b42318}
+*{box-sizing:border-box}body{margin:0;background:#eef3f8;font-family:Arial,sans-serif;color:#172033;min-height:100vh}
+header{background:var(--navy);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+header strong{font-size:17px}header span{font-size:13px;opacity:.9}
+main{max-width:980px;margin:18px auto;padding:0 14px}
+.card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 6px 24px #123c6914;margin-bottom:16px}
+h1,h2{margin:0 0 8px}h2{font-size:19px}p{color:#64748b;line-height:1.5}
+button,input,select{font:inherit;padding:10px 12px;border-radius:9px;border:1px solid #cbd5e1}
+button{background:var(--navy);color:#fff;border:0;font-weight:bold;cursor:pointer;margin:4px 4px 4px 0}
+button.sec{background:#64748b}button.red{background:var(--red)}button.sm{padding:6px 10px;font-size:13px}button:disabled{opacity:.5;cursor:not-allowed}
+label{display:block;font-weight:bold;margin:10px 0 5px}input,select{width:100%}
+.check{display:flex;gap:8px;align-items:flex-start;font-weight:normal;margin:12px 0}.check input{width:auto;margin-top:3px}
+.status{padding:11px;border-radius:10px;background:#e8f0f8;color:#243b53;margin:10px 0}
+.status.ok{background:#dcfce7;color:#166534}.status.err{background:#fee2e2;color:#991b1b}
+video{width:100%;max-height:360px;object-fit:cover;background:#111;border-radius:12px;transform:scaleX(-1)}
+.who{font-size:18px;font-weight:bold;color:var(--navy);margin:6px 0}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #e2e8f0;white-space:nowrap}th{color:#64748b;font-size:13px}
+.ok-t{color:var(--green);font-weight:bold}.no-t{color:#94a3b8}
+.hidden{display:none!important}.login{max-width:380px;margin:8vh auto}
+footer{text-align:center;color:#94a3b8;padding:18px;font-size:12px}
+</style>
+</head>
+<body>
+<header><strong>MOEF SMART ATTENDANCE · REGISTRASI WAJAH</strong><span id="who"></span><button class="sec sm" id="btnOut" onclick="logout()" style="display:none">Keluar</button></header>
+<main>
+ <section class="card login" id="loginPanel">
+  <h2>Masuk</h2>
+  <p>Gunakan akun Admin, Petugas, atau Wali Kelas.</p>
+  <label>Username</label><input id="u" autocomplete="username">
+  <label>Password</label><input id="p" type="password" autocomplete="current-password">
+  <button onclick="doLogin()" style="width:100%;margin-top:14px">MASUK</button>
+  <div id="loginStatus" class="status err hidden"></div>
+ </section>
+
+ <section id="mainPanel" class="hidden">
+  <div class="card">
+   <h2>Kamera Pendaftaran</h2>
+   <div class="who" id="current">Pilih siswa dari daftar di bawah.</div>
+   <video id="video" autoplay muted playsinline></video>
+   <label class="check"><input type="checkbox" id="consent"> <span>Persetujuan orang tua/wali untuk penggunaan data wajah siswa ini sudah diterima.</span></label>
+   <button id="btnCam" onclick="startCamera()">AKTIFKAN KAMERA</button>
+   <button id="btnCap" onclick="capture()" disabled>AMBIL 3 SAMPEL &amp; SIMPAN</button>
+   <button class="sec" id="btnCamOff" onclick="stopCamera()" disabled>MATIKAN KAMERA</button>
+   <div id="status" class="status">Aktifkan kamera, pilih siswa, centang persetujuan, lalu ambil sampel.</div>
+  </div>
+
+  <div class="card">
+   <h2>Daftar Siswa</h2>
+   <label>Kelas</label><select id="cls" onchange="loadStudents()"></select>
+   <div class="tw" style="margin-top:10px"><table>
+    <thead><tr><th>NIS</th><th>Nama</th><th>Wajah</th><th></th></tr></thead>
+    <tbody id="tb"><tr><td colspan="4">Memuat…</td></tr></tbody>
+   </table></div>
+   <p id="count"></p>
+  </div>
+ </section>
+</main>
+<footer>MOEF Smart Attendance · Muhammad Azis Effendy, S.Kom. · Copyright © 2026</footer>
+
+<script>
+const API_URL='https://script.google.com/macros/s/AKfycbyec8rrhuLnj4dXPxivy32lNccaTZ7q7EWjKB1-7ZTra2mb5a0hqYO6f_Lq8z0pttBxYg/exec';
+const MODEL_URL='https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
+const SAMPLES=3;
+let token='',user=null,students=[],faceSet={},current=null,stream=null,modelsReady=false,busy=false;
+const $=id=>document.getElementById(id);
+const esc=x=>String(x==null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+// Tanpa header Content-Type agar tidak memicu preflight CORS (Apps Script tidak mendukungnya).
+function api(fn,...args){
+ return fetch(API_URL,{method:'POST',body:JSON.stringify({fn:fn,args:args})})
+  .then(r=>r.json())
+  .then(r=>{if(!r.ok)throw new Error(r.error||'Permintaan gagal.');return r.data})
+  .catch(e=>{throw new Error(e.message==='Failed to fetch'?'Tidak dapat menghubungi server. Periksa koneksi internet.':e.message)});
+}
+function setStatus(msg,type){const el=$('status');el.className='status '+(type||'');el.textContent=msg}
+function sessionLost(e){if(/sesi/i.test(e.message||'')){alert('Sesi berakhir. Silakan masuk kembali.');logout(true);return true}return false}
+
+/* ---------- Login ---------- */
+async function doLogin(){
+ const st=$('loginStatus');st.classList.add('hidden');
+ try{
+  const r=await api('login',$('u').value,$('p').value);
+  token=r.token;user=r.user;$('p').value='';
+  $('loginPanel').classList.add('hidden');$('mainPanel').classList.remove('hidden');
+  $('who').textContent=user.name+' · '+user.role;$('btnOut').style.display='';
+  await loadClasses();
+ }catch(e){st.textContent=e.message;st.classList.remove('hidden')}
+}
+$('p').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+async function logout(silent){
+ stopCamera();
+ if(token&&!silent){try{await api('logout',token)}catch(e){}}
+ token='';user=null;current=null;students=[];faceSet={};
+ $('mainPanel').classList.add('hidden');$('loginPanel').classList.remove('hidden');
+ $('who').textContent='';$('btnOut').style.display='none';
+ $('current').textContent='Pilih siswa dari daftar di bawah.';
+}
+
+/* ---------- Kelas & siswa ---------- */
+async function loadClasses(){
+ try{
+  const cl=await api('getClasses',token);
+  $('cls').innerHTML=cl.map(c=>'<option value="'+esc(c.ID)+'">'+esc(c.ClassName)+'</option>').join('')||'<option value="">(belum ada kelas)</option>';
+  await loadStudents();
+ }catch(e){if(!sessionLost(e))setStatus(e.message,'err')}
+}
+async function loadStudents(){
+ const cid=$('cls').value;
+ if(!cid){$('tb').innerHTML='<tr><td colspan="4">Tidak ada kelas.</td></tr>';return}
+ try{
+  const [list,faces]=await Promise.all([api('getStudents',token,cid),api('getFaceStatus',token,cid)]);
+  students=list.sort((a,b)=>a.Name.localeCompare(b.Name,'id'));
+  faceSet={};faces.forEach(f=>faceSet[f.studentId]=true);
+  renderList();
+ }catch(e){if(!sessionLost(e))setStatus(e.message,'err')}
+}
+function renderList(){
+ const done=students.filter(s=>faceSet[s.ID]).length;
+ $('tb').innerHTML=students.map(s=>{
+  const has=!!faceSet[s.ID];
+  return '<tr><td>'+esc(s.NIS)+'</td><td>'+esc(s.Name)+'</td>'+
+   '<td class="'+(has?'ok-t':'no-t')+'">'+(has?'✓ Terdaftar':'Belum')+'</td>'+
+   '<td><button class="sm" onclick="pick(\''+esc(s.ID)+'\')">'+(has?'Perbarui':'Daftarkan')+'</button>'+
+   (has?'<button class="sm red" onclick="removeFace(\''+esc(s.ID)+'\')">Hapus</button>':'')+'</td></tr>';
+ }).join('')||'<tr><td colspan="4">Belum ada siswa di kelas ini.</td></tr>';
+ $('count').textContent=done+' dari '+students.length+' siswa sudah terdaftar wajahnya.';
+}
+function pick(id){
+ current=students.find(s=>s.ID===id)||null;
+ if(!current)return;
+ $('current').textContent='Siswa: '+current.Name+' (NIS '+current.NIS+')';
+ $('consent').checked=false;
+ setStatus(stream?'Centang persetujuan, lalu tekan AMBIL 3 SAMPEL & SIMPAN.':'Aktifkan kamera terlebih dahulu.');
+ window.scrollTo({top:0,behavior:'smooth'});
+}
+async function removeFace(id){
+ const s=students.find(x=>x.ID===id);if(!s)return;
+ if(!confirm('Hapus data wajah '+s.Name+'? Siswa tidak bisa absen dengan wajah sampai didaftarkan ulang.'))return;
+ try{await api('deleteFaceProfile',token,id);setStatus('Data wajah '+s.Name+' dihapus.','ok');await loadStudents()}
+ catch(e){if(!sessionLost(e))setStatus(e.message,'err')}
+}
+
+/* ---------- Kamera & model ---------- */
+async function loadModels(){
+ if(modelsReady)return;
+ if(!window.faceapi)throw new Error('Library pengenalan wajah gagal dimuat. Periksa koneksi internet.');
+ setStatus('Memuat model pengenalan wajah…');
+ await Promise.all([
+  faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+  faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+  faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+ ]);
+ modelsReady=true;
+}
+async function startCamera(){
+ try{
+  if(!window.isSecureContext)throw new Error('Kamera butuh alamat HTTPS.');
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('API kamera tidak tersedia. Buka halaman ini langsung di browser (HTTPS).');
+  stopCamera();
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'},width:{ideal:640},height:{ideal:480}},audio:false});
+  const v=$('video');v.srcObject=stream;await v.play();
+  await loadModels();
+  $('btnCap').disabled=false;$('btnCamOff').disabled=false;
+  setStatus('Kamera aktif. Pilih siswa dari daftar, centang persetujuan, lalu ambil sampel.','ok');
+ }catch(e){setStatus((e.name?e.name+': ':'')+e.message,'err');stopCamera()}
+}
+function stopCamera(){
+ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+ $('video').srcObject=null;$('btnCap').disabled=true;$('btnCamOff').disabled=true;
+}
+
+/* ---------- Ambil sampel & simpan ---------- */
+function dist(a,b){let s=0;for(let i=0;i<a.length;i++){const d=a[i]-b[i];s+=d*d}return Math.sqrt(s)}
+async function oneSample(){
+ for(let t=0;t<10;t++){
+  const r=await faceapi.detectAllFaces($('video'),new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
+  if(r.length>1)throw new Error('Terdeteksi lebih dari satu wajah. Pastikan hanya satu siswa di depan kamera.');
+  if(r.length===1&&r[0].detection.score>=0.6)return Array.from(r[0].descriptor);
+  await sleep(500);
+ }
+ throw new Error('Wajah tidak terdeteksi dengan jelas. Dekatkan wajah dan perbaiki pencahayaan.');
+}
+async function capture(){
+ if(busy)return;
+ if(!current)return setStatus('Pilih siswa dari daftar terlebih dahulu.','err');
+ if(!$('consent').checked)return setStatus('Persetujuan orang tua/wali harus dicentang.','err');
+ if(!stream)return setStatus('Aktifkan kamera terlebih dahulu.','err');
+ busy=true;$('btnCap').disabled=true;
+ try{
+  const list=[];
+  for(let i=1;i<=SAMPLES;i++){
+   setStatus('Sampel '+i+' dari '+SAMPLES+': lihat ke kamera'+(i>1?', ubah sedikit sudut wajah':'')+'…');
+   list.push(await oneSample());
+   await sleep(700);
+  }
+  let maxD=0;
+  for(let i=0;i<list.length;i++)for(let j=i+1;j<list.length;j++)maxD=Math.max(maxD,dist(list[i],list[j]));
+  if(maxD>0.45)throw new Error('Sampel tidak konsisten (jarak '+maxD.toFixed(2)+'). Ulangi dengan pencahayaan merata dan wajah menghadap lurus.');
+  const avg=new Array(128).fill(0);
+  list.forEach(d=>d.forEach((v,k)=>avg[k]+=v/list.length));
+  setStatus('Menyimpan data wajah…');
+  await api('saveFaceProfile',token,current.ID,avg,true);
+  setStatus('Berhasil: wajah '+current.Name+' tersimpan.','ok');
+  current=null;$('current').textContent='Pilih siswa berikutnya dari daftar.';$('consent').checked=false;
+  await loadStudents();
+ }catch(e){if(!sessionLost(e))setStatus(e.message,'err')}
+ finally{busy=false;if(stream)$('btnCap').disabled=false}
+}
+window.addEventListener('beforeunload',()=>{if(stream)stream.getTracks().forEach(t=>t.stop())});
+</script>
+</body>
+</html>
