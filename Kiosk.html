@@ -225,7 +225,7 @@ function showResult(r){
  if(r.blocked){cls='res-dup';icon='!';head='BELUM BISA PULANG';msg=r.message;sound='dup'}
  else if(r.alreadyRecorded){cls='res-dup';icon='!';head='SUDAH ABSEN '+String(a.type).toUpperCase();msg='Absen '+String(a.type).toLowerCase()+' Anda sudah tercatat pukul '+a.time+'. Tidak perlu absen lagi.';sound='dup'}
  else if(a.status==='Terlambat'){cls='res-late';icon='⏰';head='TERLAMBAT';msg='Absen masuk tercatat pukul '+a.time+'. Usahakan datang lebih awal.';sound='late'}
- else{cls='res-ok';icon='✓';head=a.type==='Masuk'?'HADIR TEPAT WAKTU':'PULANG TERCATAT';msg='Absen '+String(a.type).toLowerCase()+' tercatat pukul '+a.time+'.';sound='ok'}
+ else{cls='res-ok';icon='✓';head=a.type==='Masuk'?(cfg&&cfg.masuk&&cfg.masuk.lateAfter?'HADIR TEPAT WAKTU':'HADIR'):'PULANG TERCATAT';msg='Absen '+String(a.type).toLowerCase()+' tercatat pukul '+a.time+'.';sound='ok'}
  const box=$('studentResult');
  box.className='card result '+cls;
  box.innerHTML='<div class="avatar">'+icon+'</div><div class="name">'+escapeHtml(s.name)+'</div>'+
