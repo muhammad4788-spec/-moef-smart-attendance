@@ -6,10 +6,12 @@
 <title>MOEF - Kiosk Absensi Siswa</title>
 <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 <style>
-:root{--navy:#123c69;--blue:#176b87;--bg:#eef3f8;--green:#16834a;--red:#b42318}
+:root{--navy:#123c69;--blue:#176b87;--bg:#eef3f8;--green:#16834a;--red:#b42318;--amber:#b45309}
 *{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#eaf1f8,#f8fafc);font-family:Arial,sans-serif;color:#172033;min-height:100vh}
-header{background:var(--navy);color:white;padding:18px 24px;display:flex;justify-content:space-between;align-items:center}
-header strong{font-size:20px}main{max-width:1050px;margin:24px auto;padding:0 16px}
+header{background:var(--navy);color:white;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+header strong{font-size:19px}main{max-width:1050px;margin:24px auto;padding:0 16px}
+.clock{text-align:right;line-height:1.15;margin-left:auto}
+#clkTime{font-size:34px;font-weight:bold;font-variant-numeric:tabular-nums;letter-spacing:1px}#clkDate{font-size:13px;opacity:.9}
 .card{background:#fff;border-radius:18px;padding:22px;box-shadow:0 8px 30px #123c6912;margin-bottom:18px}
 h1{font-size:26px;margin:0 0 8px}p{color:#64748b;line-height:1.5}
 .grid{display:grid;grid-template-columns:1.2fr .8fr;gap:20px;align-items:start}
@@ -20,17 +22,30 @@ button.secondary{background:#64748b}button:disabled{opacity:.5}
 label{display:block;font-weight:bold;margin:12px 0 6px}input,select{width:100%}
 .status{padding:12px;border-radius:10px;background:#e8f0f8;margin:12px 0;color:#243b53}
 .status.ok{background:#dcfce7;color:#166534}.status.err{background:#fee2e2;color:#991b1b}
-.result{min-height:220px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
+.banner{padding:14px;border-radius:12px;font-size:19px;font-weight:bold;text-align:center;margin:12px 0}
+.banner.info{background:#e8f0f8;color:#243b53}.banner.ontime{background:#dcfce7;color:#166534}
+.banner.late{background:#fee2e2;color:#991b1b;animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.7}}
+.result{min-height:220px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;border:4px solid transparent}
+.result.res-ok{border-color:var(--green);background:#f0fdf4}
+.result.res-late{border-color:var(--red);background:#fff5f5}
+.result.res-dup{border-color:var(--amber);background:#fffbeb}
 .avatar{width:78px;height:78px;border-radius:50%;display:grid;place-items:center;background:#e7eef8;color:var(--navy);font-size:34px;margin-bottom:10px}
+.res-ok .avatar{background:#dcfce7;color:var(--green)}.res-late .avatar{background:#fee2e2;color:var(--red)}.res-dup .avatar{background:#fef3c7;color:var(--amber)}
 .name{font-size:26px;font-weight:bold;color:var(--navy);margin:7px 0}
 .meta{font-size:16px;color:#475569;margin:4px}
-.big{font-size:19px;font-weight:bold;margin-top:12px}
+.big{font-size:22px;font-weight:bold;margin-top:12px}
+.res-ok .big{color:var(--green)}.res-late .big{color:var(--red)}.res-dup .big{color:var(--amber)}
 .hidden{display:none!important}footer{text-align:center;color:#94a3b8;padding:20px;font-size:12px}
-@media(max-width:760px){.grid{grid-template-columns:1fr}header{padding:14px}header strong{font-size:15px}main{margin:14px auto}h1{font-size:22px}}
+@media(max-width:760px){.grid{grid-template-columns:1fr}header{padding:12px}header strong{font-size:14px}#clkTime{font-size:26px}main{margin:14px auto}h1{font-size:22px}}
 </style>
 </head>
 <body>
-<header><strong>MOEF SMART ATTENDANCE · KIOSK SISWA</strong><button class="secondary" onclick="exitKiosk()">Keluar Kiosk</button></header>
+<header>
+ <strong>MOEF SMART ATTENDANCE · KIOSK SISWA</strong>
+ <div class="clock"><div id="clkTime">--:--:--</div><div id="clkDate"></div></div>
+ <button class="secondary" onclick="exitKiosk()">Keluar Kiosk</button>
+</header>
 <main>
  <section class="card" id="pinPanel">
   <h1>Masuk ke Kiosk Absensi</h1>
@@ -43,9 +58,10 @@ label{display:block;font-weight:bold;margin:12px 0 6px}input,select{width:100%}
  <section id="kioskPanel" class="hidden">
   <div class="card">
    <h1>Absensi Siswa dengan Pengenalan Wajah</h1>
-   <p>Pilih jenis absensi, aktifkan kamera, lalu berdiri sendiri di depan kamera. Sistem akan mencocokkan wajah di server dan menampilkan identitas siswa jika cocok.</p>
+   <p>Pilih jenis absensi, aktifkan kamera, lalu berdiri sendiri di depan kamera. Setelah absen tercatat, mundur sebentar agar siswa berikutnya dapat maju.</p>
    <label>Jenis Absensi</label>
-   <select id="attendanceType"><option value="Masuk">Masuk</option><option value="Pulang">Pulang</option></select>
+   <select id="attendanceType" onchange="tick()"><option value="Masuk">Masuk</option><option value="Pulang">Pulang</option></select>
+   <div id="lateBanner" class="banner info">Memuat jadwal…</div>
    <button onclick="startCamera()">AKTIFKAN KAMERA</button>
    <button id="scanButton" onclick="startScanning()" disabled>MULAI SCAN</button>
    <button class="secondary" onclick="stopScanning()">HENTIKAN SCAN</button>
@@ -68,8 +84,9 @@ label{display:block;font-weight:bold;margin:12px 0 6px}input,select{width:100%}
 <script>
 const MODEL_URL='https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
 let kioskToken='',stream=null,modelsReady=false,scanning=false,busy=false,lastSent=0;
+let cfg=null,tz,offset=0,pauseUntil=0,needClear=false,audio=null;
 
-// URL Web App Apps Script (akhiran /exec) - ganti dengan URL deployment Anda.
+// URL Web App Apps Script (akhiran /exec).
 const API_URL='https://script.google.com/macros/s/AKfycbyec8rrhuLnj4dXPxivy32lNccaTZ7q7EWjKB1-7ZTra2mb5a0hqYO6f_Lq8z0pttBxYg/exec';
 // Tanpa header Content-Type agar tidak memicu preflight CORS (Apps Script tidak mendukungnya).
 function server(fn,...args){
@@ -78,71 +95,146 @@ function server(fn,...args){
   .then(r=>{if(!r.ok)throw new Error(r.error||'Permintaan gagal.');return r.data})
   .catch(e=>{throw new Error(e.message==='Failed to fetch'?'Tidak dapat menghubungi server. Periksa koneksi internet.':e.message)});
 }
-function status(msg,type=''){const el=document.getElementById('scanStatus');el.className='status '+type;el.textContent=msg}
-function pinStatus(msg,type='err'){const el=document.getElementById('pinStatus');el.className='status '+type;el.textContent=msg;el.classList.remove('hidden')}
+const $=id=>document.getElementById(id);
+function setStatus(msg,type=''){const el=$('scanStatus');el.className='status '+type;el.textContent=msg}
+function pinStatus(msg,type='err'){const el=$('pinStatus');el.className='status '+type;el.textContent=msg;el.classList.remove('hidden')}
+function escapeHtml(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+/* ---------- Jam realtime (mengikuti waktu server) ---------- */
+function tzParts(){
+ const p={};
+ new Intl.DateTimeFormat('en-GB',{timeZone:tz,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})
+  .formatToParts(new Date(Date.now()+offset)).forEach(x=>p[x.type]=x.value);
+ return {h:p.hour==='24'?'00':p.hour,m:p.minute,s:p.second};
+}
+const toMin=t=>{const a=String(t).split(':');return Number(a[0])*60+Number(a[1])};
+const fmtLeft=sec=>String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
+function tick(){
+ const p=tzParts();
+ $('clkTime').textContent=p.h+':'+p.m+':'+p.s;
+ $('clkDate').textContent=new Intl.DateTimeFormat('id-ID',{timeZone:tz,weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date(Date.now()+offset));
+ updateBanner(p);
+}
+function updateBanner(p){
+ if(!kioskToken)return;
+ const el=$('lateBanner'),type=$('attendanceType').value;
+ const sch=cfg?(type==='Masuk'?cfg.masuk:cfg.pulang):null;
+ if(type==='Masuk'&&sch&&sch.lateAfter){
+  if(p.h+':'+p.m>sch.lateAfter){
+   el.className='banner late';
+   el.textContent='⚠ TERLAMBAT — batas masuk '+sch.lateAfter+' sudah lewat. Absen akan dicatat TERLAMBAT.';
+  }else{
+   const left=(toMin(sch.lateAfter)+1)*60-(Number(p.h)*3600+Number(p.m)*60+Number(p.s));
+   el.className='banner ontime';
+   el.textContent='Tepat waktu — batas masuk '+sch.lateAfter+(left<=1800?' · sisa '+fmtLeft(left):'');
+  }
+ }else{
+  el.className='banner info';
+  el.textContent=type==='Masuk'?'Absen Masuk':'Absen Pulang';
+ }
+}
+async function loadConfig(){
+ try{
+  const c=await server('kioskConfig',kioskToken);
+  try{new Intl.DateTimeFormat('en-GB',{timeZone:c.tz})}catch(e){c.tz=undefined}
+  cfg=c;tz=c.tz;offset=c.serverTime-Date.now();tick();
+ }catch(e){}
+}
+setInterval(tick,1000);tick();
+setInterval(()=>{if(kioskToken)loadConfig()},300000);
+
+/* ---------- Suara notifikasi ---------- */
+function initAudio(){try{audio=audio||new (window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')audio.resume()}catch(e){}}
+function beep(kind){
+ if(!audio)return;
+ const seq=kind==='late'?[[880,0],[880,.24],[880,.48]]:kind==='dup'?[[330,0]]:[[660,0]];
+ const dur=kind==='dup'?.35:.16;
+ seq.forEach(([f,t])=>{
+  try{const o=audio.createOscillator(),g=audio.createGain();o.frequency.value=f;g.gain.value=.12;o.connect(g);g.connect(audio.destination);
+   o.start(audio.currentTime+t);o.stop(audio.currentTime+t+dur)}catch(e){}
+ });
+}
+
+/* ---------- PIN & kamera ---------- */
 async function unlockKiosk(){
  try{
-  const pin=document.getElementById('pin').value.trim();
+  initAudio();
+  const pin=$('pin').value.trim();
   const r=await server('kioskLogin',pin);kioskToken=r.token;
-  document.getElementById('pinPanel').classList.add('hidden');
-  document.getElementById('kioskPanel').classList.remove('hidden');
-  status('Kiosk terbuka. Aktifkan kamera untuk memulai.','ok');
+  $('pinPanel').classList.add('hidden');
+  $('kioskPanel').classList.remove('hidden');
+  setStatus('Kiosk terbuka. Aktifkan kamera untuk memulai.','ok');
+  await loadConfig();tick();
  }catch(e){pinStatus(e.message)}
 }
 async function loadModels(){
  if(modelsReady)return;
  if(!window.faceapi)throw new Error('Library pengenalan wajah gagal dimuat. Periksa koneksi internet.');
- status('Memuat model pengenalan wajah...');
+ setStatus('Memuat model pengenalan wajah...');
  await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)]);
  modelsReady=true;
 }
 async function startCamera(){
  try{
+  initAudio();
   if(!window.isSecureContext)throw new Error('Kamera diblokir: halaman bukan secure context. Buka halaman ini lewat alamat HTTPS.');
-  if(document.permissionsPolicy && !document.permissionsPolicy.allowsFeature('camera'))throw new Error('Browser memblokir akses kamera pada iframe (Permissions Policy). Buka halaman ini langsung di tab browser, bukan di dalam aplikasi lain.');
   if(!navigator.mediaDevices?.getUserMedia)throw new Error('API kamera tidak tersedia. Buka halaman ini langsung di tab browser (HTTPS).');
   stopScanning();
   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'},width:{ideal:640},height:{ideal:480}},audio:false});
-  const v=document.getElementById('video');v.setAttribute('playsinline','');v.muted=true;v.srcObject=stream;await v.play();
+  const v=$('video');v.setAttribute('playsinline','');v.muted=true;v.srcObject=stream;await v.play();
   await loadModels();
-  document.getElementById('scanButton').disabled=false;
-  status('Kamera aktif. Tekan MULAI SCAN.','ok');
- }catch(e){status((e.name?e.name+': ':'')+e.message,'err');stopCamera()}
+  $('scanButton').disabled=false;
+  setStatus('Kamera aktif. Tekan MULAI SCAN.','ok');
+ }catch(e){setStatus((e.name?e.name+': ':'')+e.message,'err');stopCamera()}
 }
-function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}document.getElementById('video').srcObject=null;document.getElementById('scanButton').disabled=true}
-function startScanning(){if(!stream)return;scanning=true;status('Pemindaian aktif. Posisikan satu wajah di tengah kamera.','ok');scanLoop()}
+function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}$('video').srcObject=null;$('scanButton').disabled=true}
+
+/* ---------- Pemindaian ---------- */
+function startScanning(){if(!stream)return;initAudio();scanning=true;needClear=false;pauseUntil=0;setStatus('Pemindaian aktif. Posisikan satu wajah di tengah kamera.','ok');scanLoop()}
 function stopScanning(){scanning=false;busy=false}
 async function scanLoop(){
  if(!scanning||busy)return;busy=true;
  try{
-  const v=document.getElementById('video');
-  const found=await faceapi.detectAllFaces(v,new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
-  if(found.length===1){
-   const now=Date.now();
-   if(now-lastSent>2500){
-    lastSent=now;
-    status('Wajah terdeteksi. Memeriksa kecocokan...');
-    const descriptor=Array.from(found[0].descriptor);
-    const result=await server('kioskScan',kioskToken,descriptor,document.getElementById('attendanceType').value);
-    if(result.matched){showResult(result);stopScanning();status(result.alreadyRecorded?'Absensi siswa ini sudah tercatat sebelumnya.':'Absensi berhasil disimpan ke rekap sekolah.',result.alreadyRecorded?'':'ok');}
-    else status(result.message||'Wajah belum dikenali.');
-   }
-  }else if(found.length>1)status('Terdeteksi lebih dari satu wajah. Mohon satu siswa saja di depan kamera.');
-  else status('Mencari wajah... Posisikan wajah di tengah kamera.');
- }catch(e){status(e.message,'err');if((e.message||'').toLowerCase().includes('sesi kiosk')){stopScanning();stopCamera();}}
+  const found=await faceapi.detectAllFaces($('video'),new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
+  if(found.length===0){
+   needClear=false;
+   setStatus('Mencari wajah... Posisikan wajah di tengah kamera.');
+  }else if(found.length>1){
+   setStatus('Terdeteksi lebih dari satu wajah. Mohon satu siswa saja di depan kamera.');
+  }else if(needClear||Date.now()<pauseUntil){
+   // Satu siswa hanya dipindai sekali: wajah harus meninggalkan kamera dulu sebelum pemindaian berikutnya.
+   setStatus('Terima kasih. Silakan mundur, siswa berikutnya dipersilakan maju.','ok');
+  }else if(Date.now()-lastSent>2500){
+   lastSent=Date.now();
+   setStatus('Wajah terdeteksi. Memeriksa kecocokan...');
+   const result=await server('kioskScan',kioskToken,Array.from(found[0].descriptor),$('attendanceType').value);
+   if(result.matched){
+    showResult(result);
+    needClear=true;
+    const dup=result.alreadyRecorded||result.blocked;
+    pauseUntil=Date.now()+(dup?5000:3000);
+    setStatus(result.blocked?result.message:result.alreadyRecorded?'Absensi siswa ini sudah tercatat sebelumnya.':'Absensi berhasil disimpan ke rekap sekolah.',dup?'':'ok');
+   }else setStatus(result.message||'Wajah belum dikenali.');
+  }
+ }catch(e){setStatus(e.message,'err');if((e.message||'').toLowerCase().includes('sesi kiosk')){stopScanning();stopCamera();}}
  finally{busy=false;if(scanning)setTimeout(scanLoop,900)}
 }
 function showResult(r){
- const s=r.student,a=r.attendance;
- document.getElementById('studentResult').innerHTML=
-  '<div class="avatar">✓</div><div class="name">'+escapeHtml(s.name)+'</div>'+
+ const s=r.student,a=r.attendance||{};
+ let cls,icon,head,msg,sound;
+ if(r.blocked){cls='res-dup';icon='!';head='BELUM BISA PULANG';msg=r.message;sound='dup'}
+ else if(r.alreadyRecorded){cls='res-dup';icon='!';head='SUDAH ABSEN '+String(a.type).toUpperCase();msg='Absen '+String(a.type).toLowerCase()+' Anda sudah tercatat pukul '+a.time+'. Tidak perlu absen lagi.';sound='dup'}
+ else if(a.status==='Terlambat'){cls='res-late';icon='⏰';head='TERLAMBAT';msg='Absen masuk tercatat pukul '+a.time+'. Usahakan datang lebih awal.';sound='late'}
+ else{cls='res-ok';icon='✓';head=a.type==='Masuk'?'HADIR TEPAT WAKTU':'PULANG TERCATAT';msg='Absen '+String(a.type).toLowerCase()+' tercatat pukul '+a.time+'.';sound='ok'}
+ const box=$('studentResult');
+ box.className='card result '+cls;
+ box.innerHTML='<div class="avatar">'+icon+'</div><div class="name">'+escapeHtml(s.name)+'</div>'+
   '<div class="meta">NIS: '+escapeHtml(s.nis)+'</div>'+
   '<div class="meta">Kelas: '+escapeHtml(s.className)+'</div>'+
-  '<div class="big">'+escapeHtml(a.type)+' · '+escapeHtml(a.status)+'</div>'+
-  '<div class="meta">Waktu: '+escapeHtml(a.time)+'</div>'+
-  '<div class="meta">'+(r.alreadyRecorded?'Sudah tercatat sebelumnya':'Berhasil direkam')+'</div>';
+  '<div class="big">'+escapeHtml(head)+'</div>'+
+  '<div class="meta">'+escapeHtml(msg)+'</div>';
+ beep(sound);
 }
-function escapeHtml(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function exitKiosk(){stopScanning();stopCamera();try{await server('kioskLogout',kioskToken)}catch(e){}kioskToken='';location.reload()}
 window.addEventListener('beforeunload',()=>{stopScanning();if(stream)stream.getTracks().forEach(t=>t.stop())});
 </script>
