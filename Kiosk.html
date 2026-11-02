@@ -58,13 +58,17 @@ label{display:block;font-weight:bold;margin:12px 0 6px}input,select{width:100%}
  <section id="kioskPanel" class="hidden">
   <div class="card">
    <h1>Absensi Siswa dengan Pengenalan Wajah</h1>
-   <p>Pilih jenis absensi, aktifkan kamera, lalu berdiri sendiri di depan kamera. Setelah absen tercatat, mundur sebentar agar siswa berikutnya dapat maju.</p>
-   <label>Jenis Absensi</label>
-   <select id="attendanceType" onchange="tick()"><option value="Masuk">Masuk</option><option value="Pulang">Pulang</option></select>
+   <p>Petugas memilih jenis absensi dan menyalakan kamera. Setelah scan dimulai, pengaturan disembunyikan; siswa berdiri sendiri di depan kamera, lalu mundur agar siswa berikutnya dapat maju.</p>
+   <div id="setupControls">
+    <label>Jenis Absensi</label>
+    <select id="attendanceType" onchange="tick()"><option value="Otomatis">Otomatis (sesuai jadwal)</option><option value="Masuk">Masuk saja</option><option value="Pulang">Pulang saja</option></select>
+   </div>
    <div id="lateBanner" class="banner info">Memuat jadwal…</div>
-   <button onclick="startCamera()">AKTIFKAN KAMERA</button>
-   <button id="scanButton" onclick="startScanning()" disabled>MULAI SCAN</button>
-   <button class="secondary" onclick="stopScanning()">HENTIKAN SCAN</button>
+   <div id="setupButtons">
+    <button onclick="startCamera()">AKTIFKAN KAMERA</button>
+    <button id="scanButton" onclick="startScanning()" disabled>MULAI SCAN</button>
+   </div>
+   <button class="secondary" id="lockButton" onclick="lockKiosk()">🔒 MATIKAN KAMERA &amp; KUNCI KIOSK</button>
    <div id="scanStatus" class="status">Kiosk terkunci. Masukkan PIN untuk memulai.</div>
   </div>
   <div class="grid">
@@ -115,9 +119,16 @@ function tick(){
  $('clkDate').textContent=new Intl.DateTimeFormat('id-ID',{timeZone:tz,weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date(Date.now()+offset));
  updateBanner(p);
 }
+// Jenis absensi: "Otomatis" = Pulang jika sudah lewat jam mulai pulang, selain itu Masuk.
+function resolveType(){
+ const v=$('attendanceType').value;
+ if(v!=='Otomatis')return v;
+ const p=tzParts();
+ return(cfg&&cfg.pulang&&cfg.pulang.start&&(p.h+':'+p.m)>=cfg.pulang.start)?'Pulang':'Masuk';
+}
 function updateBanner(p){
  if(!kioskToken)return;
- const el=$('lateBanner'),type=$('attendanceType').value;
+ const el=$('lateBanner'),type=resolveType();
  const sch=cfg?(type==='Masuk'?cfg.masuk:cfg.pulang):null;
  if(type==='Masuk'&&sch&&sch.lateAfter){
   if(p.h+':'+p.m>sch.lateAfter){
@@ -130,7 +141,7 @@ function updateBanner(p){
   }
  }else{
   el.className='banner info';
-  el.textContent=type==='Masuk'?'Absen Masuk':'Absen Pulang';
+  el.textContent=(type==='Masuk'?'Absen Masuk':'Absen Pulang')+($('attendanceType').value==='Otomatis'?' (otomatis sesuai jadwal)':'');
  }
 }
 async function loadConfig(){
@@ -190,8 +201,8 @@ async function startCamera(){
 function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}$('video').srcObject=null;$('scanButton').disabled=true}
 
 /* ---------- Pemindaian ---------- */
-function startScanning(){if(!stream)return;initAudio();scanning=true;needClear=false;pauseUntil=0;setStatus('Pemindaian aktif. Posisikan satu wajah di tengah kamera.','ok');scanLoop()}
-function stopScanning(){scanning=false;busy=false}
+function startScanning(){if(!stream)return;initAudio();$('setupControls').classList.add('hidden');$('setupButtons').classList.add('hidden');scanning=true;needClear=false;pauseUntil=0;setStatus('Pemindaian aktif. Posisikan satu wajah di tengah kamera.','ok');scanLoop()}
+function stopScanning(){scanning=false;busy=false;$('setupControls').classList.remove('hidden');$('setupButtons').classList.remove('hidden')}
 async function scanLoop(){
  if(!scanning||busy)return;busy=true;
  try{
@@ -207,7 +218,7 @@ async function scanLoop(){
   }else if(Date.now()-lastSent>2500){
    lastSent=Date.now();
    setStatus('Wajah terdeteksi. Memeriksa kecocokan...');
-   const result=await server('kioskScan',kioskToken,Array.from(found[0].descriptor),$('attendanceType').value);
+   const result=await server('kioskScan',kioskToken,Array.from(found[0].descriptor),resolveType());
    if(result.matched){
     showResult(result);
     needClear=true;
@@ -222,7 +233,7 @@ async function scanLoop(){
 function showResult(r){
  const s=r.student,a=r.attendance||{};
  let cls,icon,head,msg,sound;
- if(r.blocked){cls='res-dup';icon='!';head='BELUM BISA PULANG';msg=r.message;sound='dup'}
+ if(r.blocked){cls='res-dup';icon='!';head=r.title||'TIDAK DAPAT DICATAT';msg=r.message;sound='dup'}
  else if(r.alreadyRecorded){cls='res-dup';icon='!';head='SUDAH ABSEN '+String(a.type).toUpperCase();msg='Absen '+String(a.type).toLowerCase()+' Anda sudah tercatat pukul '+a.time+'. Tidak perlu absen lagi.';sound='dup'}
  else if(a.status==='Terlambat'){cls='res-late';icon='⏰';head='TERLAMBAT';msg='Absen masuk tercatat pukul '+a.time+'. Usahakan datang lebih awal.';sound='late'}
  else{cls='res-ok';icon='✓';head=a.type==='Masuk'?(cfg&&cfg.masuk&&cfg.masuk.lateAfter?'HADIR TEPAT WAKTU':'HADIR'):'PULANG TERCATAT';msg='Absen '+String(a.type).toLowerCase()+' tercatat pukul '+a.time+'.';sound='ok'}
@@ -234,6 +245,17 @@ function showResult(r){
   '<div class="big">'+escapeHtml(head)+'</div>'+
   '<div class="meta">'+escapeHtml(msg)+'</div>';
  beep(sound);
+}
+// Mematikan kamera dan mengunci Kiosk. Membuka kembali butuh PIN, sehingga siswa tidak bisa menyalakannya sendiri.
+async function lockKiosk(){
+ stopScanning();stopCamera();
+ try{await server('kioskLogout',kioskToken)}catch(e){}
+ kioskToken='';needClear=false;pauseUntil=0;
+ const box=$('studentResult');
+ box.className='card result';
+ box.innerHTML='<div class="avatar">◎</div><div class="name">Menunggu Pemindaian</div><p>Data siswa akan muncul di sini setelah wajah berhasil dikenali.</p>';
+ $('kioskPanel').classList.add('hidden');$('pinPanel').classList.remove('hidden');$('pin').value='';
+ pinStatus('Kiosk dikunci dan kamera dimatikan. Masukkan PIN untuk membuka kembali.','ok');
 }
 async function exitKiosk(){stopScanning();stopCamera();try{await server('kioskLogout',kioskToken)}catch(e){}kioskToken='';location.reload()}
 window.addEventListener('beforeunload',()=>{stopScanning();if(stream)stream.getTracks().forEach(t=>t.stop())});
