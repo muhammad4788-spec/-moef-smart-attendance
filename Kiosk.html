@@ -16,6 +16,7 @@ header strong{font-size:19px}main{max-width:1050px;margin:24px auto;padding:0 16
 h1{font-size:26px;margin:0 0 8px}p{color:#64748b;line-height:1.5}
 .grid{display:grid;grid-template-columns:1.2fr .8fr;gap:20px;align-items:start}
 video{width:100%;max-height:440px;object-fit:cover;background:#111;border-radius:14px;transform:scaleX(-1)}
+video.nomirror{transform:none}
 button,input,select{font:inherit;padding:12px;border-radius:9px;border:1px solid #cbd5e1}
 button{background:var(--navy);color:white;border:0;font-weight:bold;cursor:pointer;margin:5px 4px 5px 0}
 button.secondary{background:#64748b}button:disabled{opacity:.5}
@@ -62,6 +63,8 @@ label{display:block;font-weight:bold;margin:12px 0 6px}input,select{width:100%}
    <div id="setupControls">
     <label>Jenis Absensi</label>
     <select id="attendanceType" onchange="tick()"><option value="Otomatis">Otomatis (sesuai jadwal)</option><option value="Masuk">Masuk saja</option><option value="Pulang">Pulang saja</option></select>
+    <label>Kamera</label>
+    <select id="cameraSelect" onchange="cameraChanged()"><option value="user">Kamera depan</option><option value="environment">Kamera belakang</option></select>
    </div>
    <div id="lateBanner" class="banner info">Memuat jadwal…</div>
    <div id="setupButtons">
@@ -189,14 +192,56 @@ async function loadModels(){
  await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)]);
  modelsReady=true;
 }
+/* ---------- Pilihan kamera: depan, belakang, atau kamera tertentu ---------- */
+function camConstraints(){
+ const v=$('cameraSelect').value,base={width:{ideal:640},height:{ideal:480}};
+ if(v.indexOf('id:')===0)return Object.assign({deviceId:{exact:v.slice(3)}},base);
+ return Object.assign({facingMode:{ideal:v}},base);
+}
+async function openCamera(){
+ try{return await navigator.mediaDevices.getUserMedia({video:camConstraints(),audio:false})}
+ catch(e){
+  // Kamera yang dipilih tidak ada di perangkat ini: pakai kamera apa saja yang tersedia.
+  if(e.name==='OverconstrainedError'||e.name==='NotFoundError')return await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+  throw e;
+ }
+}
+// Kamera belakang tidak dicerminkan; kamera depan dicerminkan seperti cermin.
+function isRear(track){
+ const st=track.getSettings?track.getSettings():{};
+ if(st.facingMode)return st.facingMode==='environment';
+ if($('cameraSelect').value==='environment')return true;
+ return /back|rear|belakang|environment/i.test(track.label||'');
+}
+async function refreshDevices(){
+ try{
+  const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput'&&d.deviceId);
+  const sel=$('cameraSelect'),cur=sel.value;
+  Array.from(sel.querySelectorAll('option[data-dev]')).forEach(o=>o.remove());
+  if(devs.length>1)devs.forEach((d,i)=>{
+   const o=document.createElement('option');
+   o.value='id:'+d.deviceId;o.dataset.dev='1';o.textContent='Kamera '+(i+1)+(d.label?' - '+d.label:'');
+   sel.appendChild(o);
+  });
+  sel.value=cur;
+ }catch(e){}
+}
+function cameraChanged(){
+ const v=$('cameraSelect').value;
+ try{if(v==='user'||v==='environment')localStorage.setItem('moefKioskCam',v)}catch(e){}
+ if(stream)startCamera();
+}
 async function startCamera(){
  try{
   initAudio();
   if(!window.isSecureContext)throw new Error('Kamera diblokir: halaman bukan secure context. Buka halaman ini lewat alamat HTTPS.');
   if(!navigator.mediaDevices?.getUserMedia)throw new Error('API kamera tidak tersedia. Buka halaman ini langsung di tab browser (HTTPS).');
   stopScanning();
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'},width:{ideal:640},height:{ideal:480}},audio:false});
+  stopCamera();
+  stream=await openCamera();
   const v=$('video');v.setAttribute('playsinline','');v.muted=true;v.srcObject=stream;await v.play();
+  v.classList.toggle('nomirror',isRear(stream.getVideoTracks()[0]));
+  refreshDevices();
   await loadModels();
   $('scanButton').disabled=false;
   setStatus('Kamera aktif. Tekan MULAI SCAN.','ok');
@@ -302,6 +347,7 @@ async function lockKiosk(){
  pinStatus('Kiosk dikunci dan kamera dimatikan. Masukkan PIN untuk membuka kembali.','ok');
 }
 async function exitKiosk(){stopScanning();stopCamera();try{await server('kioskLogout',kioskToken)}catch(e){}kioskToken='';location.reload()}
+try{const c=localStorage.getItem('moefKioskCam');if(c==='user'||c==='environment')$('cameraSelect').value=c}catch(e){}
 window.addEventListener('beforeunload',()=>{stopScanning();if(stream)stream.getTracks().forEach(t=>t.stop())});
 </script>
 </body>
