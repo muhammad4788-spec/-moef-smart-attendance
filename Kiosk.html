@@ -89,6 +89,8 @@ label{display:block;font-weight:bold;margin:12px 0 6px}input,select{width:100%}
 const MODEL_URL='https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
 let kioskToken='',stream=null,modelsReady=false,scanning=false,busy=false,lastSent=0;
 let cfg=null,tz,offset=0,pauseUntil=0,needClear=false,audio=null;
+let frames=[],retryAt=0,failMsg='',undoTimer=null;
+const NEED_FRAMES=3;
 
 // URL Web App Apps Script (akhiran /exec).
 const API_URL='https://script.google.com/macros/s/AKfycbyec8rrhuLnj4dXPxivy32lNccaTZ7q7EWjKB1-7ZTra2mb5a0hqYO6f_Lq8z0pttBxYg/exec';
@@ -129,6 +131,7 @@ function resolveType(){
 function updateBanner(p){
  if(!kioskToken)return;
  const el=$('lateBanner'),type=resolveType();
+ if(cfg&&cfg.libur){el.className='banner info';el.textContent='Hari ini libur: '+cfg.libur+'. Absensi tidak dilayani.';return}
  const sch=cfg?(type==='Masuk'?cfg.masuk:cfg.pulang):null;
  if(type==='Masuk'&&sch&&sch.lateAfter){
   if(p.h+':'+p.m>sch.lateAfter){
@@ -143,6 +146,7 @@ function updateBanner(p){
   el.className='banner info';
   el.textContent=(type==='Masuk'?'Absen Masuk':'Absen Pulang')+($('attendanceType').value==='Otomatis'?' (otomatis sesuai jadwal)':'');
  }
+ if(sch&&sch.special)el.textContent+=' · Jadwal khusus: '+sch.special;
 }
 async function loadConfig(){
  try{
@@ -201,38 +205,64 @@ async function startCamera(){
 function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}$('video').srcObject=null;$('scanButton').disabled=true}
 
 /* ---------- Pemindaian ---------- */
-function startScanning(){if(!stream)return;initAudio();$('setupControls').classList.add('hidden');$('setupButtons').classList.add('hidden');scanning=true;needClear=false;pauseUntil=0;setStatus('Pemindaian aktif. Posisikan satu wajah di tengah kamera.','ok');scanLoop()}
+function startScanning(){if(!stream)return;initAudio();$('setupControls').classList.add('hidden');$('setupButtons').classList.add('hidden');scanning=true;needClear=false;pauseUntil=0;retryAt=0;frames=[];setStatus('Pemindaian aktif. Posisikan satu wajah di tengah kamera.','ok');scanLoop()}
 function stopScanning(){scanning=false;busy=false;$('setupControls').classList.remove('hidden');$('setupButtons').classList.remove('hidden')}
+function faceDist(a,b){let s=0;for(let i=0;i<a.length;i++){const d=a[i]-b[i];s+=d*d}return Math.sqrt(s)}
+// Hanya bingkai yang jelas dipakai: wajah cukup besar dan terdeteksi dengan yakin.
+function faceOk(f){
+ const vw=$('video').videoWidth||640;
+ return f.detection.score>=0.75&&f.detection.box.width>=vw*0.22;
+}
 async function scanLoop(){
  if(!scanning||busy)return;busy=true;
  try{
   const found=await faceapi.detectAllFaces($('video'),new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
   if(found.length===0){
-   needClear=false;
+   needClear=false;frames=[];
    setStatus('Mencari wajah... Posisikan wajah di tengah kamera.');
   }else if(found.length>1){
+   frames=[];
    setStatus('Terdeteksi lebih dari satu wajah. Mohon satu siswa saja di depan kamera.');
   }else if(needClear||Date.now()<pauseUntil){
    // Satu siswa hanya dipindai sekali: wajah harus meninggalkan kamera dulu sebelum pemindaian berikutnya.
+   frames=[];
    setStatus('Terima kasih. Silakan mundur, siswa berikutnya dipersilakan maju.','ok');
-  }else if(Date.now()-lastSent>2500){
-   lastSent=Date.now();
-   setStatus('Wajah terdeteksi. Memeriksa kecocokan...');
-   const result=await server('kioskScan',kioskToken,Array.from(found[0].descriptor),resolveType());
-   if(result.matched){
-    showResult(result);
-    needClear=true;
-    const dup=result.alreadyRecorded||result.blocked;
-    pauseUntil=Date.now()+(dup?5000:3000);
-    setStatus(result.blocked?result.message:result.alreadyRecorded?'Absensi siswa ini sudah tercatat sebelumnya.':'Absensi berhasil disimpan ke rekap sekolah.',dup?'':'ok');
-   }else setStatus(result.message||'Wajah belum dikenali.');
+  }else if(Date.now()<retryAt){
+   frames=[];
+   setStatus(failMsg);
+  }else if(!faceOk(found[0])){
+   frames=[];
+   setStatus('Dekatkan wajah ke kamera dan hadap lurus.');
+  }else{
+   const d=Array.from(found[0].descriptor);
+   if(frames.length&&faceDist(frames[0],d)>0.4)frames=[];   // wajah berganti: mulai ulang
+   frames.push(d);
+   if(frames.length<NEED_FRAMES){
+    setStatus('Memverifikasi wajah ('+frames.length+'/'+NEED_FRAMES+')... tetap hadap kamera.');
+   }else{
+    const batch=frames;frames=[];
+    setStatus('Memeriksa kecocokan...');
+    const result=await server('kioskScan',kioskToken,batch,resolveType());
+    if(result.matched){
+     showResult(result);
+     needClear=true;
+     const dup=result.alreadyRecorded||result.blocked;
+     pauseUntil=Date.now()+(dup?5000:3000);
+     setStatus(result.blocked?result.message:result.alreadyRecorded?'Absensi siswa ini sudah tercatat sebelumnya.':'Absensi berhasil disimpan ke rekap sekolah.',dup?'':'ok');
+    }else{
+     failMsg=result.message||'Wajah belum dikenali.';
+     retryAt=Date.now()+2500;
+     setStatus(failMsg);
+    }
+   }
   }
- }catch(e){setStatus(e.message,'err');if((e.message||'').toLowerCase().includes('sesi kiosk')){stopScanning();stopCamera();}}
- finally{busy=false;if(scanning)setTimeout(scanLoop,900)}
+ }catch(e){frames=[];setStatus(e.message,'err');if((e.message||'').toLowerCase().includes('sesi kiosk')){stopScanning();stopCamera();}}
+ finally{busy=false;if(scanning)setTimeout(scanLoop,300)}
 }
 function showResult(r){
  const s=r.student,a=r.attendance||{};
  let cls,icon,head,msg,sound;
+ const canUndo=!r.blocked&&!r.alreadyRecorded&&!!a.id;
  if(r.blocked){cls='res-dup';icon='!';head=r.title||'TIDAK DAPAT DICATAT';msg=r.message;sound='dup'}
  else if(r.alreadyRecorded){cls='res-dup';icon='!';head='SUDAH ABSEN '+String(a.type).toUpperCase();msg='Absen '+String(a.type).toLowerCase()+' Anda sudah tercatat pukul '+a.time+'. Tidak perlu absen lagi.';sound='dup'}
  else if(a.status==='Terlambat'){cls='res-late';icon='⏰';head='TERLAMBAT';msg='Absen masuk tercatat pukul '+a.time+'. Usahakan datang lebih awal.';sound='late'}
@@ -243,8 +273,22 @@ function showResult(r){
   '<div class="meta">NIS: '+escapeHtml(s.nis)+'</div>'+
   '<div class="meta">Kelas: '+escapeHtml(s.className)+'</div>'+
   '<div class="big">'+escapeHtml(head)+'</div>'+
-  '<div class="meta">'+escapeHtml(msg)+'</div>';
+  '<div class="meta">'+escapeHtml(msg)+'</div>'+
+  (canUndo?'<button class="secondary" id="undoBtn" onclick="undoLast(\''+escapeHtml(a.id)+'\')">Bukan saya? BATALKAN</button>':'');
  beep(sound);
+ clearTimeout(undoTimer);
+ if(canUndo)undoTimer=setTimeout(()=>{const x=$('undoBtn');if(x)x.remove()},15000);
+}
+// Jika Kiosk salah mengenali, siswa dapat membatalkan absensi yang baru tercatat (15 detik).
+async function undoLast(id){
+ try{
+  await server('kioskUndo',kioskToken,id);
+  const box=$('studentResult');
+  box.className='card result res-dup';
+  box.innerHTML='<div class="avatar">↩</div><div class="name">Absensi Dibatalkan</div><p>Silakan mundur, lalu scan ulang dengan wajah menghadap lurus ke kamera.</p>';
+  needClear=true;pauseUntil=Date.now()+1500;
+  setStatus('Absensi dibatalkan. Silakan scan ulang.','ok');
+ }catch(e){setStatus(e.message,'err')}
 }
 // Mematikan kamera dan mengunci Kiosk. Membuka kembali butuh PIN, sehingga siswa tidak bisa menyalakannya sendiri.
 async function lockKiosk(){
