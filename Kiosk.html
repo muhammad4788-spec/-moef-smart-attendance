@@ -93,7 +93,8 @@ const MODEL_URL='https://raw.githubusercontent.com/justadudewhohacks/face-api.js
 let kioskToken='',stream=null,modelsReady=false,scanning=false,busy=false,lastSent=0;
 let cfg=null,tz,offset=0,pauseUntil=0,needClear=false,audio=null;
 let frames=[],retryAt=0,failMsg='',undoTimer=null;
-const NEED_FRAMES=3;
+const NEED_FRAMES=2;
+let FAST=null,FULL=null;
 
 // URL Web App Apps Script (akhiran /exec).
 const API_URL='https://script.google.com/macros/s/AKfycbyec8rrhuLnj4dXPxivy32lNccaTZ7q7EWjKB1-7ZTra2mb5a0hqYO6f_Lq8z0pttBxYg/exec';
@@ -185,11 +186,25 @@ async function unlockKiosk(){
   await loadConfig();tick();
  }catch(e){pinStatus(e.message)}
 }
+// Pemanasan: inferensi pertama di perangkat sangat lambat (kompilasi WebGL), jadi dijalankan sekali di awal.
+async function warmUp(){
+ try{
+  const c=document.createElement('canvas');c.width=c.height=160;
+  const x=c.getContext('2d');x.fillStyle='#888';x.fillRect(0,0,160,160);
+  await faceapi.nets.tinyFaceDetector.locateFaces(c,FAST);
+  await faceapi.nets.faceLandmark68Net.detectLandmarks(c);
+  await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(c);
+ }catch(e){}
+}
 async function loadModels(){
  if(modelsReady)return;
  if(!window.faceapi)throw new Error('Library pengenalan wajah gagal dimuat. Periksa koneksi internet.');
  setStatus('Memuat model pengenalan wajah...');
  await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)]);
+ FAST=new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.5});
+ FULL=new faceapi.TinyFaceDetectorOptions();
+ setStatus('Menyiapkan mesin pengenalan wajah...');
+ await warmUp();
  modelsReady=true;
 }
 /* ---------- Pilihan kamera: depan, belakang, atau kamera tertentu ---------- */
@@ -253,19 +268,16 @@ function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=
 function startScanning(){if(!stream)return;initAudio();$('setupControls').classList.add('hidden');$('setupButtons').classList.add('hidden');scanning=true;needClear=false;pauseUntil=0;retryAt=0;frames=[];setStatus('Pemindaian aktif. Posisikan satu wajah di tengah kamera.','ok');scanLoop()}
 function stopScanning(){scanning=false;busy=false;$('setupControls').classList.remove('hidden');$('setupButtons').classList.remove('hidden')}
 function faceDist(a,b){let s=0;for(let i=0;i<a.length;i++){const d=a[i]-b[i];s+=d*d}return Math.sqrt(s)}
-// Hanya bingkai yang jelas dipakai: wajah cukup besar dan terdeteksi dengan yakin.
-function faceOk(f){
- const vw=$('video').videoWidth||640;
- return f.detection.score>=0.75&&f.detection.box.width>=vw*0.22;
-}
+// Tahap 1 (cepat, 224 px): ada wajah? berapa? cukup besar? Tahap 2 (penuh) hanya jika layak.
 async function scanLoop(){
  if(!scanning||busy)return;busy=true;
  try{
-  const found=await faceapi.detectAllFaces($('video'),new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
-  if(found.length===0){
+  const video=$('video'),vw=video.videoWidth||640;
+  const dets=await faceapi.detectAllFaces(video,FAST);
+  if(dets.length===0){
    needClear=false;frames=[];
    setStatus('Mencari wajah... Posisikan wajah di tengah kamera.');
-  }else if(found.length>1){
+  }else if(dets.length>1){
    frames=[];
    setStatus('Terdeteksi lebih dari satu wajah. Mohon satu siswa saja di depan kamera.');
   }else if(needClear||Date.now()<pauseUntil){
@@ -275,34 +287,42 @@ async function scanLoop(){
   }else if(Date.now()<retryAt){
    frames=[];
    setStatus(failMsg);
-  }else if(!faceOk(found[0])){
+  }else if(dets[0].box.width<vw*0.15){
    frames=[];
-   setStatus('Dekatkan wajah ke kamera dan hadap lurus.');
+   setStatus('Dekatkan wajah ke kamera.');
   }else{
-   const d=Array.from(found[0].descriptor);
-   if(frames.length&&faceDist(frames[0],d)>0.4)frames=[];   // wajah berganti: mulai ulang
-   frames.push(d);
-   if(frames.length<NEED_FRAMES){
-    setStatus('Memverifikasi wajah ('+frames.length+'/'+NEED_FRAMES+')... tetap hadap kamera.');
+   const f=await faceapi.detectSingleFace(video,FULL).withFaceLandmarks().withFaceDescriptor();
+   if(!f||f.detection.score<0.6){
+    frames=[];
+    setStatus('Hadap lurus ke kamera.');
    }else{
-    const batch=frames;frames=[];
-    setStatus('Memeriksa kecocokan...');
-    const result=await server('kioskScan',kioskToken,batch,resolveType());
-    if(result.matched){
-     showResult(result);
-     needClear=true;
-     const dup=result.alreadyRecorded||result.blocked;
-     pauseUntil=Date.now()+(dup?5000:3000);
-     setStatus(result.blocked?result.message:result.alreadyRecorded?'Absensi siswa ini sudah tercatat sebelumnya.':'Absensi berhasil disimpan ke rekap sekolah.',dup?'':'ok');
+    const d=Array.from(f.descriptor);
+    if(frames.length&&faceDist(frames[0],d)>0.4)frames=[];   // wajah berganti: mulai ulang
+    frames.push(d);
+    if(frames.length<NEED_FRAMES){
+     setStatus('Memverifikasi wajah ('+frames.length+'/'+NEED_FRAMES+')... tetap hadap kamera.');
     }else{
-     failMsg=result.message||'Wajah belum dikenali.';
-     retryAt=Date.now()+2500;
-     setStatus(failMsg);
+     const batch=frames;frames=[];
+     setStatus('Memeriksa kecocokan...');
+     const t0=performance.now();
+     const result=await server('kioskScan',kioskToken,batch,resolveType());
+     const sec=((performance.now()-t0)/1000).toFixed(1);
+     if(result.matched){
+      showResult(result);
+      needClear=true;
+      const dup=result.alreadyRecorded||result.blocked;
+      pauseUntil=Date.now()+(dup?5000:3000);
+      setStatus((result.blocked?result.message:result.alreadyRecorded?'Absensi siswa ini sudah tercatat sebelumnya.':'Absensi berhasil disimpan ke rekap sekolah.')+' ('+sec+' dtk)',dup?'':'ok');
+     }else{
+      failMsg=(result.message||'Wajah belum dikenali.')+' ('+sec+' dtk)';
+      retryAt=Date.now()+2000;
+      setStatus(failMsg);
+     }
     }
    }
   }
  }catch(e){frames=[];setStatus(e.message,'err');if((e.message||'').toLowerCase().includes('sesi kiosk')){stopScanning();stopCamera();}}
- finally{busy=false;if(scanning)setTimeout(scanLoop,300)}
+ finally{busy=false;if(scanning)setTimeout(scanLoop,120)}
 }
 function showResult(r){
  const s=r.student,a=r.attendance||{};
